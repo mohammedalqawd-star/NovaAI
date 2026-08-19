@@ -1,2 +1,4 @@
-aiogram>=3.22,<4
-aiohttp>=3.12,<4
+aiogram>=3.20,<4
+openai>=1.99,<2
+aiosqlite>=0.20,<1
+pytest>=8,<9
