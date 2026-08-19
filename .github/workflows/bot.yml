@@ -14,7 +14,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+          cache: pip
       - name: Install dependencies
         run: pip install -r requirements.txt
       - name: Syntax check
-        run: python -m py_compile bot.py config.py core.py database.py ai.py
+        run: python -m py_compile bot.py config.py core.py database.py ai.py search.py tests/test_core.py
+      - name: Unit tests
+        run: pytest -q
