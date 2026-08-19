@@ -3,7 +3,9 @@ import ast
 import logging
 import operator as op
 import os
+import re
 import sqlite3
+import math
 from datetime import datetime
 
 import aiohttp
@@ -54,51 +56,102 @@ def history(uid):
     c=db(); r=c.execute("SELECT role,content FROM chats WHERE user_id=? ORDER BY id DESC LIMIT 12",(uid,)).fetchall(); c.close(); return list(reversed(r))
 
 
+# Safe local calculator: parses only arithmetic AST nodes, never eval().
+CALC_BINOPS={ast.Add:op.add,ast.Sub:op.sub,ast.Mult:op.mul,ast.Div:op.truediv,ast.FloorDiv:op.floordiv,ast.Pow:op.pow,ast.Mod:op.mod}
+CALC_UNARY={ast.USub:op.neg,ast.UAdd:op.pos}
+
 def calc(expr):
-    ops={ast.Add:op.add,ast.Sub:op.sub,ast.Mult:op.mul,ast.Div:op.truediv,ast.Pow:op.pow,ast.Mod:op.mod,ast.USub:op.neg,ast.UAdd:op.pos}
+    expr=expr.replace("^","**").replace("×","*").replace("÷","/")
+    if len(expr)>120 or not re.fullmatch(r"[0-9+\-*/().%\s]+",expr): raise ValueError()
     def w(n):
-        if isinstance(n,ast.Constant) and isinstance(n.value,(int,float)): return n.value
-        if isinstance(n,ast.BinOp) and type(n.op) in ops: return ops[type(n.op)](w(n.left),w(n.right))
-        if isinstance(n,ast.UnaryOp) and type(n.op) in ops: return ops[type(n.op)](w(n.operand))
+        if isinstance(n,ast.Constant) and isinstance(n.value,(int,float)) and not isinstance(n.value,bool):
+            if abs(n.value)>10**12: raise ValueError()
+            return n.value
+        if isinstance(n,ast.BinOp) and type(n.op) in CALC_BINOPS:
+            left,right=w(n.left),w(n.right)
+            if isinstance(n.op,ast.Pow) and abs(right)>10: raise ValueError()
+            value=CALC_BINOPS[type(n.op)](left,right)
+            if not math.isfinite(value) or abs(value)>10**15: raise ValueError()
+            return value
+        if isinstance(n,ast.UnaryOp) and type(n.op) in CALC_UNARY: return CALC_UNARY[type(n.op)](w(n.operand))
         raise ValueError()
-    return w(ast.parse(expr.replace("^","**"),mode="eval").body)
+    return w(ast.parse(expr,mode="eval").body)
 
 
-def free_ai(uid,text):
-    t=text.strip(); l=t.lower()
-    if l in {"مرحبا","هلا","السلام عليكم","hello","hi"}: return "أهلًا بك 👋 أنا NovaBiz AI. البوت يعمل بنجاح، وأنا جاهز لمساعدتك."
-    if any(x in t for x in ("كيف حالك","كيفك","كيف حالكم")): return "بخير والحمد لله 🤖❤️ وجاهز لمساعدتك!"
-    if "من أنت" in t or "من انت" in t: return "🤖 أنا NovaBiz AI. أعمل حاليًا في الوضع المجاني بدون مفتاح API."
-    if t.startswith("احسب "):
-        try:return f"🧮 النتيجة: {calc(t[5:])}"
-        except:return "❌ مثال صحيح: احسب 250*4+100"
-    if t.startswith("كرر "): return t[5:]
-    if t.startswith("اكتب "): return "✍️ مسودة مجانية:\n\n"+t[5:].strip()+"\n\nيمكنك تطويرها وإضافة التفاصيل التي تريدها."
-    return "🧠 استلمت رسالتك بنجاح!\n\nهذا هو الوضع المجاني. الأدوات المجانية تعمل بدون API، أما نموذج AI خارجي حقيقي فيحتاج مزودًا يقدم حصة مجانية.\n\nرسالتك: "+t
+def fmt_num(v):
+    if isinstance(v,float) and v.is_integer(): return str(int(v))
+    return f"{v:.10g}" if isinstance(v,float) else str(v)
+
+
+def extract_calc(t):
+    for p in ("احسب","حاسبة","حساب","calculate","calc"):
+        if t.lower().startswith(p.lower()):
+            x=t[len(p):].strip(" :：")
+            if x:return x
+    if re.fullmatch(r"[0-9+\-*/().%^×÷\s]+",t) and any(ch.isdigit() for ch in t): return t
+    return None
+
+
+def writing(t):
+    req=re.sub(r"^(اكتب|اكتب لي|اكتبلي|صياغة|صغ|حسن|حسّن|write|draft)\s*","",t,flags=re.I).strip()
+    l=req.lower()
+    if any(k in l for k in ("إعلان","اعلان","تسويق","محل","متجر")):
+        subject=req or "محلات القعود"
+        return f"📣 إعلان احترافي\n\n🔥 {subject}\n\nجودة مضمونة، خدمة ممتازة وأسعار مناسبة.\nنوفر لكم ما تحتاجونه بكل ثقة واهتمام.\n\n📍 زورونا اليوم\n📞 تواصلوا معنا لمعرفة التفاصيل\n\n⭐ محلات القعود — ثقة وجودة في كل تعامل"
+    if "تهنئة" in l or "مبارك" in l:
+        return "🎉 تهنئة جميلة\n\nألف مبارك! نسأل الله لكم دوام الفرح والنجاح والتوفيق. 🌷"
+    if "رسالة" in l or "واتساب" in l:
+        return "💬 رسالة جاهزة:\n\nالسلام عليكم، نرحب بكم ونسعد بخدمتكم. لأي استفسار أو طلب، تواصلوا معنا وسنكون سعيدين بمساعدتكم. 🌟"
+    if "سيرة" in l or "cv" in l:
+        return "📄 قالب سيرة ذاتية:\n\nالاسم:\nرقم الهاتف:\nالبريد الإلكتروني:\nالمهارات:\nالخبرات:\nالتعليم:\nالهدف المهني:"
+    return f"✍️ صياغة مجانية:\n\n{req or 'اكتب إعلان لمحلات القعود'}\n\nأرسل نوع النص والهدف والجمهور للحصول على صياغة أدق."
+
+
+def free_tool(uid,t):
+    x=t.strip(); l=x.lower(); expr=extract_calc(x)
+    if expr:
+        try:return f"🧮 النتيجة: {fmt_num(calc(expr))}"
+        except ZeroDivisionError:return "❌ لا يمكن القسمة على صفر."
+        except:return "❌ العملية غير صحيحة. مثال: احسب 250*4+100"
+    if re.match(r"^(اكتب|اكتب لي|اكتبلي|صياغة|صغ|حسن|حسّن|write|draft)\b",x,re.I): return writing(x)
+    if l.startswith("عدد الكلمات:") or l.startswith("احسب الكلمات:"):
+        text=x.split(":",1)[1].strip(); return f"🔢 عدد الكلمات: {len(text.split())}\n🔤 عدد الأحرف: {len(text)}"
+    if l.startswith("اعكس:") or l.startswith("اعكس "):
+        text=x.split(":",1)[1].strip() if ":" in x else x[5:].strip(); return f"🔄 النص المعكوس:\n{text[::-1]}"
+    if l.startswith("كرر "):
+        parts=x[5:].rsplit(" ",1)
+        if len(parts)==2 and parts[1].isdigit() and int(parts[1])<=20:return "\n".join([parts[0]]*int(parts[1]))
+    if x in ("مرحبا","هلا","السلام عليكم") or l in ("hello","hi"): return "🤖 أهلاً بك! أنا NovaBiz AI، وجاهز لمساعدتك."
+    if any(k in x for k in ("كيف حالك","كيفك","كيف حالكم")): return "بخير والحمد لله 🤖❤️ وجاهز لمساعدتك!"
+    if "من أنت" in x or "من انت" in x: return "🤖 أنا NovaBiz AI. أعمل حاليًا بأدوات مجانية محلية بدون API."
+    return None
 
 
 async def ask_ai(uid,text):
-    if not OPENAI_API_KEY: return free_ai(uid,text)
-    payload={"model":MODEL,"input":[{"role":r,"content":c} for r,c in history(uid)]+[{"role":"user","content":text}],"instructions":"أنت NovaBiz AI، مساعد عربي مفيد وودود. أجب بالعربية عند استخدام العربية."}
-    headers={"Authorization":f"Bearer {OPENAI_API_KEY}","Content-Type":"application/json"}
-    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=90)) as s:
-        async with s.post("https://api.openai.com/v1/responses",headers=headers,json=payload) as r:
-            data=await r.json()
-            if r.status>=400: raise RuntimeError(data.get("error",{}).get("message","AI error"))
-            return data.get("output_text","لم أستطع توليد رد الآن.")
+    if OPENAI_API_KEY:
+        payload={"model":MODEL,"input":[{"role":r,"content":c} for r,c in history(uid)]+[{"role":"user","content":text}],"instructions":"أنت NovaBiz AI، مساعد عربي مفيد وودود. أجب بالعربية عند استخدام العربية."}
+        headers={"Authorization":f"Bearer {OPENAI_API_KEY}","Content-Type":"application/json"}
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=90)) as s:
+            async with s.post("https://api.openai.com/v1/responses",headers=headers,json=payload) as r:
+                data=await r.json()
+                if r.status>=400: raise RuntimeError(data.get("error",{}).get("message","AI error"))
+                return data.get("output_text","لم أستطع توليد رد الآن.")
+    result=free_tool(uid,text)
+    if result:return result
+    return "🆓 الأدوات المجانية متاحة الآن:\n\n🧮 احسب 250*4+100\n✍️ اكتب إعلان لمحلات القعود\n🔢 عدد الكلمات: هذا نص\n🔄 اعكس: مرحباً\n🔁 كرر مرحبا 3"
 
 
 kb=ReplyKeyboardMarkup(keyboard=[
     [KeyboardButton(text="🧠 الذكاء الاصطناعي"),KeyboardButton(text="💰 رصيدي")],
     [KeyboardButton(text="🧮 حاسبة"),KeyboardButton(text="✍️ كتابة")],
-    [KeyboardButton(text="👤 حسابي"),KeyboardButton(text="ℹ️ المساعدة")]
+    [KeyboardButton(text="🔧 الأدوات المجانية"),KeyboardButton(text="👤 حسابي")],
+    [KeyboardButton(text="ℹ️ المساعدة")]
 ],resize_keyboard=True)
 
 
 @dp.message(CommandStart())
 async def start(m:Message):
-    ensure_user(m)
-    await m.answer("🤖 أهلاً بك في *NovaBiz AI*\n\n🆓 نظام مجاني للتجربة\n🎁 رصيدك: 50 رسالة\n\nأرسل أي رسالة أو اختر خدمة من القائمة.",parse_mode="Markdown",reply_markup=kb)
+    ensure_user(m); await m.answer("🤖 أهلاً بك في *NovaBiz AI*\n\n🆓 أدوات مجانية تعمل بدون API.\n🎁 رصيدك: 50 رسالة\n\nأرسل طلبك أو اختر خدمة من القائمة.",parse_mode="Markdown",reply_markup=kb)
 
 @dp.message(Command("balance"))
 @dp.message(F.text=="💰 رصيدي")
@@ -107,24 +160,25 @@ async def bal(m:Message):
 
 @dp.message(F.text=="👤 حسابي")
 async def profile(m:Message):
-    ensure_user(m); u=m.from_user
-    await m.answer(f"👤 حسابي\n\nID: `{u.id}`\nالاسم: {u.full_name}\nالرصيد: {balance(u.id)} رسالة",parse_mode="Markdown")
+    ensure_user(m); u=m.from_user; await m.answer(f"👤 حسابي\n\nID: `{u.id}`\nالاسم: {u.full_name}\nالرصيد: {balance(u.id)} رسالة",parse_mode="Markdown")
 
 @dp.message(F.text=="🧮 حاسبة")
-async def calc_help(m:Message): await m.answer("🧮 اكتب مثلًا:\nاحسب 250*4+100\n\nيدعم + - * / % **")
+async def calc_help(m:Message): await m.answer("🧮 اكتب مثلًا:\nاحسب 250*4+100\nأو أرسل 25*4+10")
 
 @dp.message(F.text=="✍️ كتابة")
-async def write_help(m:Message): await m.answer("✍️ اكتب طلبك بهذا الشكل:\nاكتب إعلان لمحلات القعود\nأو أرسل نصًا تريد تحسينه.")
+async def write_help(m:Message): await m.answer("✍️ اكتب طلبك، مثل:\nاكتب إعلان لمحلات القعود\nاكتب رسالة ترحيب للزبائن\nاكتب تهنئة")
+
+@dp.message(F.text=="🔧 الأدوات المجانية")
+async def tools(m:Message): await m.answer("🔧 الأدوات المجانية:\n\n🧮 احسب 250*4+100\n✍️ اكتب إعلان لمحلات القعود\n🔢 عدد الكلمات: هذا نص\n🔄 اعكس: مرحباً\n🔁 كرر مرحبا 3\n\nتعمل محليًا بدون API.")
 
 @dp.message(Command("help"))
 @dp.message(F.text=="ℹ️ المساعدة")
-async def help_(m:Message): await m.answer("🆓 NovaBiz AI\n\n🧠 ذكاء اصطناعي\n🧮 حاسبة\n✍️ كتابة\n💰 الرصيد\n👤 الحساب\n\n/start\n/balance\n/help")
+async def help_(m:Message): await m.answer("🆓 NovaBiz AI\n\n🧠 ذكاء اصطناعي\n🧮 حاسبة\n✍️ كتابة\n🔧 أدوات مجانية\n💰 الرصيد\n👤 الحساب\n\n/start\n/balance\n/help")
 
 @dp.message(Command("stats"))
 async def stats(m:Message):
     if ADMIN_ID and m.from_user.id!=ADMIN_ID:return
-    c=db(); u=c.execute("SELECT COUNT(*) FROM users").fetchone()[0]; q=c.execute("SELECT COUNT(*) FROM chats").fetchone()[0]; c.close()
-    await m.answer(f"📊 المستخدمون: {u}\n💬 الرسائل: {q}")
+    c=db(); u=c.execute("SELECT COUNT(*) FROM users").fetchone()[0]; q=c.execute("SELECT COUNT(*) FROM chats").fetchone()[0]; c.close(); await m.answer(f"📊 المستخدمون: {u}\n💬 الرسائل: {q}")
 
 @dp.message(F.text=="🧠 الذكاء الاصطناعي")
 async def ai_btn(m:Message): await m.answer("🧠 اكتب سؤالك الآن.")
@@ -139,7 +193,5 @@ async def chat(m:Message):
     except Exception:
         logging.exception("chat error"); await m.answer("⚠️ حدث خطأ مؤقت. حاول مرة أخرى.")
 
-async def main():
-    db().close(); await dp.start_polling(bot)
-
+async def main(): db().close(); await dp.start_polling(bot)
 if __name__=="__main__": asyncio.run(main())
