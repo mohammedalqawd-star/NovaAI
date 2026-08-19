@@ -5,6 +5,11 @@ on:
   push:
     branches: [main]
 
+# Keep only one bot instance alive so Telegram polling is not duplicated.
+concurrency:
+  group: nova-ai-bot
+  cancel-in-progress: true
+
 jobs:
   bot:
     runs-on: ubuntu-latest
