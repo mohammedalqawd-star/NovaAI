@@ -9,6 +9,7 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -18,6 +19,6 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
       - name: Syntax check
-        run: python -m py_compile bot.py config.py core.py database.py ai.py search.py verifier.py tests/test_core.py
+        run: python -m py_compile bot.py config.py core.py database.py ai.py search.py verifier.py file_engine.py vision.py memory.py planner.py
       - name: Unit tests
         run: pytest -q
