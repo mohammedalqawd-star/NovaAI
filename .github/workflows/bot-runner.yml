@@ -19,11 +19,11 @@ jobs:
     env:
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
       AI_API_KEY: ${{ secrets.AI_API_KEY }}
-      AI_FALLBACK_API_KEY: ${{ secrets.AI_FALLBACK_API_KEY }}
+      FALLBACK_AI_API_KEY: ${{ secrets.AI_FALLBACK_API_KEY }}
       AI_BASE_URL: ${{ secrets.AI_BASE_URL }}
-      AI_FALLBACK_BASE_URL: ${{ secrets.AI_FALLBACK_BASE_URL }}
+      FALLBACK_AI_BASE_URL: ${{ secrets.AI_FALLBACK_BASE_URL }}
       AI_MODEL: ${{ secrets.AI_MODEL }}
-      AI_FALLBACK_MODEL: ${{ secrets.AI_FALLBACK_MODEL }}
+      FALLBACK_AI_MODEL: ${{ secrets.AI_FALLBACK_MODEL }}
       ADMIN_ID: ${{ secrets.ADMIN_ID }}
       FREE_CREDITS: ${{ secrets.FREE_CREDITS }}
       VISION_MODEL: ${{ secrets.VISION_MODEL }}
@@ -31,24 +31,36 @@ jobs:
       PYTHONUNBUFFERED: '1'
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.12'
           cache: pip
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: python -m pip install --upgrade pip && python -m pip install -r requirements.txt
 
       - name: Validate required secrets
         shell: bash
         run: |
-          test -n "$TELEGRAM_BOT_TOKEN" || { echo 'Missing TELEGRAM_BOT_TOKEN'; exit 1; }
-          test -n "$AI_API_KEY" || { echo 'Missing AI_API_KEY'; exit 1; }
-          test -n "$ADMIN_ID" || { echo 'Missing ADMIN_ID'; exit 1; }
+          set -euo pipefail
+          missing=0
+          for name in TELEGRAM_BOT_TOKEN AI_API_KEY ADMIN_ID; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "::error::Missing required repository secret: $name"
+              missing=1
+            fi
+          done
+          if [[ "$missing" -ne 0 ]]; then
+            echo 'Add the missing secrets under Settings > Secrets and variables > Actions, then run this workflow again.'
+            exit 1
+          fi
           echo 'Required secrets are configured.'
+
+      - name: Run tests
+        run: python -m pytest -q
 
       - name: Start NovaBiz AI
         run: python bot.py
