@@ -6,11 +6,7 @@ from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command, CommandStart
 from aiogram.types import Message
 from config import settings, validate_runtime_config
-from database import (
-    init_db, ensure_user, get_user, consume_credit, refund_credit, add_usage,
-    save_message, get_history, set_credits, set_banned, list_user_ids, stats,
-    clear_memories,
-)
+from database import init_db, ensure_user, get_user, consume_credit, refund_credit, add_usage, save_message, get_history, set_credits, set_banned, list_user_ids, stats, clear_memories
 from core import route, safe_calculate
 from ai import AIEngine
 from search import search_web, format_sources
@@ -41,8 +37,7 @@ async def ask_ai(user_id: int, text: str, sources=None):
     history = await get_history(user_id, limit=12)
     messages = [{"role": row[0], "content": row[1]} for row in history]
     memory = await load_memory(user_id)
-    now = datetime.now(timezone.utc).isoformat()
-    prompt = f"الوقت الحالي UTC: {now}\n\nطلب المستخدم الحالي:\n{text}"
+    prompt = f"الوقت الحالي UTC: {datetime.now(timezone.utc).isoformat()}\n\nطلب المستخدم الحالي:\n{text}"
     if memory:
         prompt += "\n\nذاكرة المستخدم المسموح بها:\n" + memory
     if sources:
@@ -131,7 +126,6 @@ async def photo(message: Message):
 async def voice(message: Message):
     if not await guard(message): return
     if not ai.client: return await message.answer("⚠️ خدمة الصوت غير مفعلة حالياً.")
-    if not await consume_credit(message.from_user.id): return await message.answer("💳 انتهى رصيدك.")
     try:
         file = await bot.get_file(message.voice.file_id)
         from io import BytesIO
@@ -139,10 +133,12 @@ async def voice(message: Message):
         text = await ai.transcribe(buf.getvalue())
         if not text: raise ValueError("empty transcription")
         answer = await ask_ai(message.from_user.id, text)
-        await message.answer(f"🎙️ النص: {text}\n\n{answer}")
-    except Exception:
-        await refund_credit(message.from_user.id)
-        await message.answer("⚠️ تعذر معالجة الصوت. تمت إعادة الرصيد.")
+        await add_usage(message.from_user.id, "voice"); await message.answer(f"🎙️ النص: {text}\n\n{answer}")
+    except PermissionError:
+        await message.answer("💳 انتهى رصيدك.")
+    except Exception as exc:
+        log.exception("voice failed: %s", exc)
+        await message.answer("⚠️ تعذر معالجة الصوت. إذا تم خصم الرصيد بسبب فشل AI فسيُعاد تلقائياً.")
 
 @dp.message(F.document)
 async def document(message: Message):
@@ -160,6 +156,7 @@ async def document(message: Message):
         text = extract_text(name, buf.getvalue())
         if not text.strip(): return await message.answer("📄 لم أستطع استخراج نص من الملف.")
         answer = await ask_ai(message.from_user.id, (message.caption or "حلل الملف ولخص أهم النقاط") + "\n\nمحتوى الملف:\n" + text)
+        await add_usage(message.from_user.id, "file")
         await message.answer(answer)
     except PermissionError:
         await message.answer("💳 انتهى رصيدك.")
