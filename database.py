@@ -1,7 +1,8 @@
 import aiosqlite
 from datetime import datetime, timezone
+from config import settings
 
-DB_PATH = "novabiz.db"
+DB_PATH = settings.database_url.rsplit("/", 1)[-1] if settings.database_url.startswith("sqlite") else "novabiz.db"
 
 async def init_db():
     async with aiosqlite.connect(DB_PATH) as db:
@@ -43,7 +44,7 @@ async def init_db():
 async def ensure_user(user):
     now = datetime.now(timezone.utc).isoformat()
     async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("INSERT OR IGNORE INTO users(id, username, first_name, created_at, credits) VALUES (?, ?, ?, ?, ?)", (user.id, user.username, user.first_name, now, 50))
+        await db.execute("INSERT OR IGNORE INTO users(id, username, first_name, created_at, credits) VALUES (?, ?, ?, ?, ?)", (user.id, user.username, user.first_name, now, settings.free_credits))
         await db.execute("UPDATE users SET username=?, first_name=? WHERE id=?", (user.username, user.first_name, user.id))
         await db.commit()
 
@@ -100,5 +101,20 @@ async def stats():
     async with aiosqlite.connect(DB_PATH) as db:
         users = (await (await db.execute("SELECT COUNT(*) FROM users")).fetchone())[0]
         active = (await (await db.execute("SELECT COUNT(DISTINCT user_id) FROM usage WHERE created_at >= datetime('now','-7 days')")).fetchone())[0]
-        messages = (await (await db.execute("SELECT COUNT(*) FROM usage")).fetchone())[0]
-        return users, active, messages
+        requests = (await (await db.execute("SELECT COUNT(*) FROM usage")).fetchone())[0]
+        return users, active, requests
+
+async def set_memory(user_id: int, key: str, value: str):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("INSERT INTO memories(user_id,key,value) VALUES(?,?,?) ON CONFLICT(user_id,key) DO UPDATE SET value=excluded.value", (user_id, key, value))
+        await db.commit()
+
+async def get_memories(user_id: int, limit: int = 20):
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute("SELECT key,value FROM memories WHERE user_id=? ORDER BY id DESC LIMIT ?", (user_id, limit))
+        return await cur.fetchall()
+
+async def clear_memories(user_id: int):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("DELETE FROM memories WHERE user_id=?", (user_id,))
+        await db.commit()
