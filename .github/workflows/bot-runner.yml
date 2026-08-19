@@ -1,0 +1,54 @@
+name: NovaBiz AI Bot Runner
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+  schedule:
+    # GitHub-hosted runners are temporary. Restart periodically to keep the bot available.
+    - cron: '0 */5 * * *'
+
+concurrency:
+  group: novabiz-bot
+  cancel-in-progress: true
+
+jobs:
+  run-bot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 295
+    env:
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      AI_API_KEY: ${{ secrets.AI_API_KEY }}
+      AI_FALLBACK_API_KEY: ${{ secrets.AI_FALLBACK_API_KEY }}
+      AI_BASE_URL: ${{ secrets.AI_BASE_URL }}
+      AI_FALLBACK_BASE_URL: ${{ secrets.AI_FALLBACK_BASE_URL }}
+      AI_MODEL: ${{ secrets.AI_MODEL }}
+      AI_FALLBACK_MODEL: ${{ secrets.AI_FALLBACK_MODEL }}
+      ADMIN_ID: ${{ secrets.ADMIN_ID }}
+      FREE_CREDITS: ${{ secrets.FREE_CREDITS }}
+      VISION_MODEL: ${{ secrets.VISION_MODEL }}
+      SEARCH_ENABLED: 'true'
+      PYTHONUNBUFFERED: '1'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Validate required secrets
+        shell: bash
+        run: |
+          test -n "$TELEGRAM_BOT_TOKEN" || { echo 'Missing TELEGRAM_BOT_TOKEN'; exit 1; }
+          test -n "$AI_API_KEY" || { echo 'Missing AI_API_KEY'; exit 1; }
+          test -n "$ADMIN_ID" || { echo 'Missing ADMIN_ID'; exit 1; }
+          echo 'Required secrets are configured.'
+
+      - name: Start NovaBiz AI
+        run: python bot.py
