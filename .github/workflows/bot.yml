@@ -27,5 +27,5 @@ jobs:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPENAI_MODEL: ${{ secrets.OPENAI_MODEL }}
-          ADMIN_ID: ${{ secrets.ADMIN_ID }}
+          ADMIN_ID: ${{ secrets.ADMIN_ID || '8960865438' }}
         run: python bot.py
