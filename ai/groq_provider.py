@@ -28,16 +28,9 @@ class AIEngine:
     async def _chat(self, api_key: str, base_url: str, model: str, messages: list[dict[str, Any]]) -> str:
         if not api_key:
             raise RuntimeError("AI provider key is not configured")
-        payload = {
-            "model": model,
-            "messages": messages,
-            "temperature": 0.2,
-        }
+        payload = {"model": model, "messages": messages, "temperature": 0.2}
         timeout = aiohttp.ClientTimeout(total=settings.request_timeout)
-        headers = {
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        }
+        headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
         async with aiohttp.ClientSession(timeout=timeout) as session:
             async with session.post(f"{base_url}/chat/completions", json=payload, headers=headers) as response:
                 body = await response.text()
@@ -45,18 +38,20 @@ class AIEngine:
                     raise RuntimeError(f"AI provider HTTP {response.status}: {body[:500]}")
                 data = await response.json()
         try:
-            return data["choices"][0]["message"]["content"].strip()
+            content = data["choices"][0]["message"]["content"]
+            return str(content).strip()
         except (KeyError, IndexError, TypeError) as exc:
             raise RuntimeError("Invalid AI provider response") from exc
 
-    async def answer(self, messages: list[dict[str, Any]]) -> str:
+    async def answer(self, messages: list[dict[str, Any]], model: str | None = None) -> str:
         """Use Groq first, then an optional OpenAI-compatible fallback."""
+        selected_model = model or self.model
         try:
-            return await self._chat(self.api_key, self.base_url, self.model, messages)
+            return await self._chat(self.api_key, self.base_url, selected_model, messages)
         except Exception as primary_error:
             if not self.fallback_key:
                 raise primary_error
-            return await self._chat(self.fallback_key, self.fallback_url, self.fallback_model, messages)
+            return await self._chat(self.fallback_key, self.fallback_url, model or self.fallback_model, messages)
 
     async def transcribe(self, audio: bytes) -> str:
         if not self.api_key:
