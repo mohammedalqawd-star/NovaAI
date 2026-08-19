@@ -9,19 +9,17 @@ from aiogram.filters import Command, CommandStart
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
-OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
-MODEL = os.environ.get("OPENAI_MODEL") or "gpt-5.6-luna"
-ADMIN_ID = int(os.environ.get("ADMIN_ID") or "0")
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY") or ""
+MODEL = os.environ.get("OPENAI_MODEL") or "gpt-5-mini"
 DB_PATH = os.environ.get("DB_PATH") or "novaai.db"
 
 if not BOT_TOKEN:
     raise RuntimeError("BOT_TOKEN is missing")
-if not OPENAI_API_KEY:
-    raise RuntimeError("OPENAI_API_KEY is missing")
 
 logging.basicConfig(level=logging.INFO)
 bot = Bot(BOT_TOKEN)
 dp = Dispatcher()
+
 
 def db():
     conn = sqlite3.connect(DB_PATH)
@@ -30,6 +28,7 @@ def db():
     conn.commit()
     return conn
 
+
 def ensure_user(message: Message):
     conn = db(); u = message.from_user
     conn.execute("INSERT OR IGNORE INTO users(user_id,username,name,messages_left) VALUES(?,?,?,50)", (u.id, u.username, u.full_name))
@@ -37,41 +36,74 @@ def ensure_user(message: Message):
     conn.commit(); row = conn.execute("SELECT messages_left FROM users WHERE user_id=?", (u.id,)).fetchone(); conn.close()
     return row[0]
 
+
 def balance(user_id: int):
     conn = db(); row = conn.execute("SELECT messages_left FROM users WHERE user_id=?", (user_id,)).fetchone(); conn.close()
     return row[0] if row else 0
 
+
 def consume(user_id: int):
     conn = db(); conn.execute("UPDATE users SET messages_left=messages_left-1 WHERE user_id=? AND messages_left>0", (user_id,)); conn.commit(); conn.close()
 
+
 def save_chat(user_id: int, role: str, content: str):
     conn = db(); conn.execute("INSERT INTO chats(user_id,role,content) VALUES(?,?,?)", (user_id, role, content)); conn.commit(); conn.close()
+
 
 def recent_chat(user_id: int, limit: int = 12):
     conn = db(); rows = conn.execute("SELECT role,content FROM chats WHERE user_id=? ORDER BY id DESC LIMIT ?", (user_id, limit)).fetchall(); conn.close()
     return list(reversed(rows))
 
-async def ask_ai(user_id: int, text: str) -> str:
-    history = recent_chat(user_id)
-    input_items = [{"role": role, "content": content} for role, content in history]
-    input_items.append({"role": "user", "content": text})
-    payload = {"model": MODEL, "input": input_items, "instructions": "أنت Nova AI، مساعد ذكاء اصطناعي عربي مفيد وودود. أجب بالعربية عند استخدام العربية، وباختصار مفيد. لا تدّعي أنك إنسان."}
-    headers = {"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type": "application/json"}
-    timeout = aiohttp.ClientTimeout(total=90)
-    async with aiohttp.ClientSession(timeout=timeout) as session:
-        async with session.post("https://api.openai.com/v1/responses", headers=headers, json=payload) as r:
-            data = await r.json()
-            if r.status >= 400:
-                logging.error("OpenAI error: %s", data)
-                raise RuntimeError(data.get("error", {}).get("message", "AI request failed"))
-            return data.get("output_text", "لم أستطع توليد رد الآن.")
 
-keyboard = ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="🧠 ذكاء اصطناعي"), KeyboardButton(text="💰 رصيدي")], [KeyboardButton(text="ℹ️ المساعدة")]], resize_keyboard=True)
+async def ask_ai(user_id: int, text: str) -> str:
+    # Real AI when an API key is configured.
+    if OPENAI_API_KEY:
+        history = recent_chat(user_id)
+        input_items = [{"role": role, "content": content} for role, content in history]
+        input_items.append({"role": "user", "content": text})
+        payload = {
+            "model": MODEL,
+            "input": input_items,
+            "instructions": "أنت Nova AI، مساعد ذكاء اصطناعي عربي مفيد وودود. أجب بالعربية عند استخدام العربية، وباختصار مفيد.",
+        }
+        headers = {"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type": "application/json"}
+        timeout = aiohttp.ClientTimeout(total=90)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.post("https://api.openai.com/v1/responses", headers=headers, json=payload) as r:
+                data = await r.json()
+                if r.status >= 400:
+                    logging.error("AI API error: %s", data)
+                    raise RuntimeError(data.get("error", {}).get("message", "AI request failed"))
+                return data.get("output_text", "لم أستطع توليد رد الآن.")
+
+    # Free test mode: lets the Telegram bot be tested without an AI API key.
+    lower = text.lower().strip()
+    if text in ("مرحبا", "هلا", "السلام عليكم") or lower in ("hi", "hello", "hey"):
+        return "🤖 أهلاً بك! أنا Nova AI التجريبي. البوت يعمل بنجاح ✅\n\nأرسل سؤالك لتجربة النظام."
+    if "اسمك" in text or "من أنت" in text:
+        return "🤖 أنا Nova AI، بوت ذكاء اصطناعي تجريبي. تم تشغيل وضع الاختبار المجاني حاليًا."
+    if "رصيد" in text:
+        return f"💰 رصيدك الحالي: {balance(user_id)} رسالة."
+    return "🧠 استلمت رسالتك بنجاح!\n\nهذا وضع الاختبار المجاني. لإجابات ذكاء اصطناعي حقيقية نضيف مفتاح مزود AI لاحقًا.\n\nرسالتك: " + text
+
+
+keyboard = ReplyKeyboardMarkup(
+    keyboard=[
+        [KeyboardButton(text="🧠 ذكاء اصطناعي"), KeyboardButton(text="💰 رصيدي")],
+        [KeyboardButton(text="ℹ️ المساعدة")],
+    ],
+    resize_keyboard=True,
+)
+
 
 @dp.message(CommandStart())
 async def start(message: Message):
     ensure_user(message)
-    await message.answer("🤖 أهلاً بك في *Nova AI*\n\nأنا مساعدك بالذكاء الاصطناعي. أرسل أي سؤال أو فكرة وسأساعدك.\n\n🎁 رصيدك المجاني: 50 رسالة.", parse_mode="Markdown", reply_markup=keyboard)
+    await message.answer(
+        "🤖 أهلاً بك في *Nova AI*\n\nالبوت يعمل الآن في وضع الاختبار المجاني.\nأرسل أي رسالة لتجربة النظام.\n\n🎁 رصيدك المجاني: 50 رسالة.",
+        parse_mode="Markdown", reply_markup=keyboard,
+    )
+
 
 @dp.message(Command("balance"))
 @dp.message(F.text == "💰 رصيدي")
@@ -79,14 +111,17 @@ async def show_balance(message: Message):
     ensure_user(message)
     await message.answer(f"💰 رصيدك الحالي: *{balance(message.from_user.id)}* رسالة.", parse_mode="Markdown")
 
+
 @dp.message(Command("help"))
 @dp.message(F.text == "ℹ️ المساعدة")
 async def help_cmd(message: Message):
-    await message.answer("🧠 أرسل رسالتك مباشرة وسيرد عليك Nova AI.\n\n/balance — عرض الرصيد\n/start — بدء البوت")
+    await message.answer("🧠 أرسل رسالتك مباشرة.\n\n/balance — عرض الرصيد\n/start — بدء البوت")
+
 
 @dp.message(F.text == "🧠 ذكاء اصطناعي")
 async def ai_button(message: Message):
     await message.answer("🧠 اكتب سؤالك الآن وسأجيبك.")
+
 
 @dp.message(F.text)
 async def chat(message: Message):
@@ -97,14 +132,19 @@ async def chat(message: Message):
     await message.bot.send_chat_action(message.chat.id, "typing")
     try:
         answer = await ask_ai(message.from_user.id, message.text)
-        save_chat(message.from_user.id, "user", message.text); save_chat(message.from_user.id, "assistant", answer); consume(message.from_user.id)
+        save_chat(message.from_user.id, "user", message.text)
+        save_chat(message.from_user.id, "assistant", answer)
+        consume(message.from_user.id)
         await message.answer(answer)
     except Exception:
         logging.exception("AI failure")
-        await message.answer("⚠️ حدث خطأ مؤقت أثناء الاتصال بالذكاء الاصطناعي. حاول مرة أخرى.")
+        await message.answer("⚠️ حدث خطأ مؤقت. حاول مرة أخرى.")
+
 
 async def main():
-    db().close(); await dp.start_polling(bot)
+    db().close()
+    await dp.start_polling(bot)
+
 
 if __name__ == "__main__":
     asyncio.run(main())
