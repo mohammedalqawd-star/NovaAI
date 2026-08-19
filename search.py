@@ -1,49 +1,105 @@
 import html
 import re
-from urllib.parse import quote_plus
+import xml.etree.ElementTree as ET
+from urllib.parse import quote_plus, quote
 import aiohttp
 from config import settings
 
-async def search_web(query: str, limit: int = 6):
+
+def _add(results, title, snippet, url, source_type="web", published_at=None):
+    if title and snippet and url:
+        results.append({
+            "title": title.strip(),
+            "snippet": snippet.strip(),
+            "url": url.strip(),
+            "source_type": source_type,
+            "published_at": published_at,
+        })
+
+
+async def search_web(query: str, limit: int = 8):
     if not settings.search_enabled:
         return []
+
     results = []
     timeout = aiohttp.ClientTimeout(total=settings.request_timeout)
-    async with aiohttp.ClientSession(timeout=timeout, headers={"User-Agent": "NovaBizAI/1.0"}) as session:
+    headers = {"User-Agent": "NovaBizAI/1.1"}
+
+    async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
+        # DuckDuckGo instant answers / related results.
         try:
             url = f"https://api.duckduckgo.com/?q={quote_plus(query)}&format=json&no_html=1"
             async with session.get(url) as response:
                 if response.status == 200:
                     data = await response.json()
-                    if data.get("AbstractText"):
-                        results.append({"title": data.get("Heading", "DuckDuckGo"), "snippet": data["AbstractText"], "url": data.get("AbstractURL", "")})
+                    _add(results, data.get("Heading", "DuckDuckGo"), data.get("AbstractText", ""), data.get("AbstractURL", ""), "search")
                     for item in data.get("RelatedTopics", []):
-                        if isinstance(item, dict) and item.get("Text"):
-                            results.append({"title": "DuckDuckGo", "snippet": item["Text"], "url": item.get("FirstURL", "")})
+                        if isinstance(item, dict):
+                            _add(results, "DuckDuckGo", item.get("Text", ""), item.get("FirstURL", ""), "search")
         except Exception:
             pass
+
+        # Google News RSS: useful for recent news without requiring an API key.
+        try:
+            rss_url = (
+                "https://news.google.com/rss/search?q=" + quote_plus(query) +
+                "&hl=ar&gl=YE&ceid=YE:ar"
+            )
+            async with session.get(rss_url) as response:
+                if response.status == 200:
+                    root = ET.fromstring(await response.text())
+                    for item in root.findall("./channel/item")[:5]:
+                        title = item.findtext("title", "")
+                        link = item.findtext("link", "")
+                        published = item.findtext("pubDate", "")
+                        description = item.findtext("description", "")
+                        snippet = html.unescape(re.sub(r"<[^>]+>", " ", description)).strip() or title
+                        _add(results, title, snippet, link, "news", published)
+        except Exception:
+            pass
+
+        # Wikipedia Arabic + English for reference/background knowledge.
         for lang in ("ar", "en"):
             try:
-                url = f"https://{lang}.wikipedia.org/w/api.php?action=query&list=search&srsearch={quote_plus(query)}&format=json&srlimit=3"
+                url = (
+                    f"https://{lang}.wikipedia.org/w/api.php?action=query&list=search"
+                    f"&srsearch={quote_plus(query)}&format=json&srlimit=3"
+                )
                 async with session.get(url) as response:
                     if response.status == 200:
                         data = await response.json()
                         for item in data.get("query", {}).get("search", []):
-                            title = html.unescape(re.sub("<.*?>", "", item.get("title", "")))
-                            snippet = html.unescape(re.sub("<.*?>", "", item.get("snippet", "")))
-                            results.append({"title": title, "snippet": snippet, "url": f"https://{lang}.wikipedia.org/wiki/{quote_plus(item.get('title', ''))}"})
+                            title = html.unescape(re.sub(r"<.*?>", "", item.get("title", "")))
+                            snippet = html.unescape(re.sub(r"<.*?>", "", item.get("snippet", "")))
+                            wiki_url = f"https://{lang}.wikipedia.org/wiki/{quote(item.get('title', ''), safe='')}"
+                            _add(results, title, snippet, wiki_url, "reference")
             except Exception:
                 pass
-    unique, seen = [], set()
+
+    unique = []
+    seen = set()
     for result in results:
-        key = (result["title"], result["url"])
-        if result.get("snippet") and key not in seen:
+        key = result["url"]
+        if key not in seen:
             seen.add(key)
             unique.append(result)
+
     return unique[:limit]
 
 
 def format_sources(results):
     if not results:
         return "لم أجد مصادر كافية للتحقق من هذا الطلب."
-    return "\n\n".join(f"[{i}] {r['title']}\n{r['snippet']}\nالمصدر: {r['url']}" for i, r in enumerate(results, 1))
+    lines = []
+    for i, result in enumerate(results, 1):
+        meta = result.get("source_type", "web")
+        published = result.get("published_at")
+        if published:
+            meta += f" | {published}"
+        lines.append(
+            f"[{i}] {result['title']}\n"
+            f"النوع: {meta}\n"
+            f"المقتطف: {result['snippet']}\n"
+            f"الرابط: {result['url']}"
+        )
+    return "\n\n".join(lines)
