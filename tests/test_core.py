@@ -1,3 +1,4 @@
+import asyncio
 import pytest
 
 from core import safe_calculate, route
@@ -17,10 +18,12 @@ def test_safe_calculate_rejects_code():
         safe_calculate("__import__('os').system('echo bad')")
 
 
-@pytest.mark.asyncio
-async def test_router_search_and_writing():
-    result = await route("ابحث عن آخر أخبار اليمن")
-    assert "SEARCH" in result.kinds
+def test_router_search_and_writing():
+    async def run():
+        result = await route("ابحث عن آخر أخبار اليمن")
+        assert "SEARCH" in result.kinds
 
-    result = await route("اكتب إعلاناً لمحلي")
-    assert "WRITING" in result.kinds
+        result = await route("اكتب إعلاناً لمحلي")
+        assert "WRITING" in result.kinds
+
+    asyncio.run(run())
