@@ -10,6 +10,7 @@ from config import settings
 from database import init_db, ensure_user, get_user, consume_credit, add_usage, set_credits, set_banned, list_user_ids, stats
 from core import route, safe_calculate
 from ai import AIEngine
+from search import search_web, format_sources
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("novabiz")
@@ -28,7 +29,7 @@ async def guard(message: Message):
 @dp.message(CommandStart())
 async def start(message: Message):
     await ensure_user(message.from_user)
-    await message.answer("👋 <b>مرحباً بك في NovaBiz AI</b>\n\n🧠 اكتب طلبك مباشرة. أفهم البحث، الحساب، الترجمة، الكتابة، البرمجة والمحادثة.\n\n💡 مثال: <i>احسب 500*20</i>")
+    await message.answer("👋 <b>مرحباً بك في NovaBiz AI</b>\n\n🧠 اكتب طلبك مباشرة. أفهم البحث، الحساب، الترجمة، الكتابة، البرمجة والمحادثة.\n🔎 أستطيع جمع مصادر ويب عندما يكون الطلب حديثاً أو يحتاج بحثاً.\n\n💡 مثال: <i>احسب 500*20</i>")
 
 @dp.message(Command("me"))
 async def me(message: Message):
@@ -41,7 +42,7 @@ async def status(message: Message):
     if message.from_user.id != settings.admin_id:
         return await message.answer("🚫 غير مصرح.")
     users, active, messages = await stats()
-    await message.answer(f"📊 <b>NovaBiz Status</b>\nUsers: {users}\nActive 7d: {active}\nRequests: {messages}\nTelegram: 🟢\nDatabase: 🟢\nAI: {'🟢' if ai.client else '🔴'}")
+    await message.answer(f"📊 <b>NovaBiz Status</b>\nUsers: {users}\nActive 7d: {active}\nRequests: {messages}\nTelegram: 🟢\nDatabase: 🟢\nSearch: {'🟢' if settings.search_enabled else '🔴'}\nAI: {'🟢' if ai.client else '🔴'}")
 
 @dp.message(Command("ban"))
 async def ban(message: Message):
@@ -102,12 +103,23 @@ async def chat(message: Message):
         return await message.answer("💳 انتهى رصيدك المجاني. اطلب من المدير إضافة رصيد.")
     await add_usage(message.from_user.id, "+".join(intent.kinds))
     await message.bot.send_chat_action(message.chat.id, "typing")
+    sources = []
+    if "SEARCH" in intent.kinds or "NEWS" in intent.kinds:
+        sources = await search_web(text)
+        if not sources:
+            await message.answer("🔎 لم أجد مصادر كافية للتحقق من الطلب، لذلك لن أدّعي أنني بحثت بنجاح.")
+            return
+    prompt = text
+    if sources:
+        prompt += "\n\nهذه نتائج بحث فعلية. استخدمها فقط فيما تدعمه، واذكر المصادر والاختلافات إن وجدت:\n" + format_sources(sources)
     try:
-        answer = await ai.answer([{"role": "user", "content": text}])
+        answer = await ai.answer([{"role": "user", "content": prompt}])
     except Exception as exc:
         log.exception("AI request failed: %s", exc)
         return await message.answer("⚠️ تعذر الوصول إلى محرك الذكاء الاصطناعي حالياً. حاول لاحقاً.")
-    await message.answer(answer)
+    if sources:
+        answer += "\n\n📚 <b>المصادر:</b>\n" + "\n".join(f"{i}. <a href=\"{s['url']}\">{s['title']}</a>" for i, s in enumerate(sources[:5], 1) if s.get('url'))
+    await message.answer(answer, disable_web_page_preview=True)
 
 async def main():
     await init_db()
