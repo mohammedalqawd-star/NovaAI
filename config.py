@@ -16,5 +16,7 @@ class Settings:
 
 settings = Settings()
 
-if not settings.bot_token:
-    raise RuntimeError("TELEGRAM_BOT_TOKEN is required")
+
+def validate_runtime_config() -> None:
+    if not settings.bot_token:
+        raise RuntimeError("TELEGRAM_BOT_TOKEN is required")
