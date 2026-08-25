@@ -19,6 +19,13 @@ jobs:
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
       AI_API_KEY: ${{ secrets.AI_API_KEY }}
       ADMIN_ID: ${{ secrets.ADMIN_ID }}
+      FAL_KEY: ${{ secrets.FAL_KEY }}
+      VIDEO_MODEL: alibaba/wan-3.0/reference-to-video
+      VIDEO_ASPECT_RATIO: 9:16
+      VIDEO_RESOLUTION: 1080p
+      VIDEO_MAX_SHOTS: '8'
+      VIDEO_MAX_TELEGRAM_MB: '20'
+      VIDEO_FONT_NAME: DejaVu Sans
       SEARCH_ENABLED: 'true'
       PYTHONUNBUFFERED: '1'
     steps:
@@ -31,6 +38,11 @@ jobs:
           python-version: '3.12'
           cache: pip
 
+      - name: Install system video tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ffmpeg libsndfile1 fonts-dejavu
+
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
@@ -41,7 +53,7 @@ jobs:
         run: |
           set -euo pipefail
           missing=0
-          for name in TELEGRAM_BOT_TOKEN AI_API_KEY ADMIN_ID; do
+          for name in TELEGRAM_BOT_TOKEN AI_API_KEY ADMIN_ID FAL_KEY; do
             if [[ -z "${!name:-}" ]]; then
               echo "::error::Missing required repository secret: $name"
               missing=1
@@ -54,6 +66,9 @@ jobs:
 
       - name: Test configuration and modules
         run: python -m pytest -q
+
+      - name: Syntax check video modules
+        run: python -m py_compile video_engine.py video_bot.py
 
       - name: Start NovaBiz AI
         run: python bot.py
