@@ -23,6 +23,7 @@ from verifier import verify_search_result
 from file_engine import extract_text, analyze_csv
 from vision import analyze_image
 from memory import load_memory
+from video_bot import register_video_handlers
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("novabiz")
@@ -30,6 +31,7 @@ validate_runtime_config()
 bot = Bot(settings.bot_token)
 dp = Dispatcher()
 ai = AIEngine()
+register_video_handlers(dp)
 
 _rate: dict[int, deque[float]] = defaultdict(deque)
 
@@ -87,6 +89,7 @@ async def start(message: Message):
     await message.answer(
         "👋 أهلاً بك في NovaBiz AI\n\n"
         "🧠 اكتب طلبك مباشرة: بحث، كتابة، ترجمة، برمجة، حساب، تحليل ملفات، صور أو صوت.\n\n"
+        "🎬 لصناعة فيديو سينمائي: أرسل /video\n"
         "💡 مثال: ابحث عن آخر أخبار اليمن"
     )
 
@@ -209,7 +212,6 @@ async def voice(message: Message):
         text = await ai.transcribe(buf.getvalue())
         if not text:
             raise ValueError("empty transcription")
-        # ask_ai is the only place that consumes the AI credit for the voice request.
         answer = await ask_ai(message.from_user.id, text)
         await add_usage(message.from_user.id, "voice")
         await message.answer(f"🎙️ النص: {text}\n\n{answer}")
